@@ -25,6 +25,7 @@ class SyntheticBlockGraphType(Enum):
     QUEUES = 3
 
 
+# 2, because empty WorkGraph has start and finish service vertexes
 EMPTY_GRAPH_VERTEX_COUNT = 2
 
 
@@ -73,6 +74,7 @@ def generate_blocks(graph_type: SyntheticBlockGraphType, n_blocks: int, type_pro
     match graph_type:
         case SyntheticBlockGraphType.SEQUENTIAL:
             for idx, start in enumerate(bg.nodes[:-2]):
+                # if current BlockGraphNode is not service, we build edge between current node and next one
                 if start.wg.vertex_count > EMPTY_GRAPH_VERTEX_COUNT \
                         and bg.nodes[idx + 1].wg.vertex_count > EMPTY_GRAPH_VERTEX_COUNT:
                     bg.add_edge(start, bg.nodes[idx + 1])
