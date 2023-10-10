@@ -57,9 +57,12 @@ class Agent:
         self._last_task_executed = end
 
     def update_stat(self, start: Time):
-        # count last iteration downtime
-        # if given start time is lower than last executed task
-        #   then this downtime are already in self_downtime
+        """
+        Count last iteration downtime.
+        If given start time is lower, than the last executed task, then this downtime are already in self_downtime
+
+        :param start: global start time of confirmed block
+        """
         self._downtime += max(Time(0), start - self._last_task_executed)
 
     def __str__(self):
@@ -116,7 +119,7 @@ class Manager:
     """
     def __init__(self, agents: list[Agent]):
         if len(agents) == 0:
-            raise NoSufficientAgents("Manager can't work with empty list of agents")
+            raise NoSufficientAgents('Manager can not work with empty list of agents')
         self._agents = agents
 
     # TODO Upgrade to supply the best parallelism
@@ -136,8 +139,8 @@ class Manager:
 
             assert start_time >= max_parent_time, f'Scheduler {agent._scheduler} does not handle parent_time!'
 
-            if logger:
-                logger(f'Scheduled {i} block: {agent._scheduler}')
+            if logger and not block.is_service():
+                logger(f'{agent._scheduler}')
             sblock = ScheduledBlock(wg=block.wg, agent=agent, schedule=agent_schedule,
                                     start_time=start_time,
                                     end_time=end_time)

@@ -15,7 +15,7 @@ class WorkUnit(AutoJSONSerializable['WorkUnit'], Identifiable):
     def __init__(self, id: str, name: str, worker_reqs: list[WorkerReq] = [], equipment_reqs: list[EquipmentReq] = [],
                  material_reqs: list[MaterialReq] = [], object_reqs: list[ConstructionObjectReq] = [],
                  group: str = 'default', is_service_unit=False, volume: float = 0,
-                 volume_type: str = "unit", display_name: str = "", workground_size: int = 100):
+                 volume_type: str = 'unit', display_name: str = "", workground_size: int = 100):
         """
         :param worker_reqs: list of required professions (i.e. workers)
         :param equipment_reqs: list of required equipment
@@ -36,8 +36,12 @@ class WorkUnit(AutoJSONSerializable['WorkUnit'], Identifiable):
         self.is_service_unit = is_service_unit
         self.volume = volume
         self.volume_type = volume_type
-        self.display_name = display_name
+        self.display_name = display_name if display_name else name
         self.workground_size = workground_size
+
+    def __del__(self):
+        for name, attr in self.__dict__.items():
+            del attr
 
     def need_materials(self) -> list[Material]:
         return [req.material() for req in self.material_reqs]

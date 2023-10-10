@@ -2,12 +2,14 @@ from collections import deque
 from dataclasses import dataclass, field
 from enum import Enum
 from functools import cached_property, cache
-from typing import Union, Optional
+from typing import Optional
 
 import numpy as np
 from scipy.sparse import dok_matrix
 
+from sampo.schemas.scheduled_work import ScheduledWork
 from sampo.schemas.serializable import JSONSerializable, T, JS
+from sampo.schemas.time import Time
 from sampo.schemas.works import WorkUnit
 
 
@@ -20,7 +22,6 @@ class EdgeType(Enum):
     StartStart = 'SS'
     FinishFinish = 'FF'
     FinishStart = 'FS'
-    StartFinish = 'SF'
 
     @staticmethod
     def is_dependency(edge) -> bool:
@@ -46,16 +47,17 @@ class GraphNode(JSONSerializable['GraphNode']):
     """
     Class to describe Node in graph
     """
-    _work_unit: WorkUnit
-    _parent_edges: list[GraphEdge]
-    _children_edges: list[GraphEdge]
 
     def __init__(self, work_unit: WorkUnit,
-                 parent_works: Union[list['GraphNode'], list[tuple['GraphNode', float, EdgeType]]]):
+                 parent_works: list['GraphNode'] | list[tuple['GraphNode', float, EdgeType]]):
         self._work_unit = work_unit
         self._parent_edges = []
         self.add_parents(parent_works)
         self._children_edges = []
+
+    def __del__(self):
+        for attr in self.__dict__.values():
+            del attr
 
     def __hash__(self) -> int:
         return hash(self.id)
@@ -100,14 +102,15 @@ class GraphNode(JSONSerializable['GraphNode']):
         :param parent_works: list of parent works
         """
         edges: list[GraphEdge] = []
-        if len(parent_works) > 0 and isinstance(parent_works[0], GraphNode):
-            edges = [GraphEdge(p, self, -1, EdgeType.FinishStart) for p in parent_works]
-        elif len(parent_works) > 0 and isinstance(parent_works[0], tuple):
-            edges = [GraphEdge(p, self, lag, edge_type) for p, lag, edge_type in parent_works]
+        if parent_works:
+            if isinstance(parent_works[0], GraphNode):
+                edges = [GraphEdge(p, self, 1, EdgeType.FinishStart) for p in parent_works]
+            elif isinstance(parent_works[0], tuple):
+                edges = [GraphEdge(p, self, lag, edge_type) for p, lag, edge_type in parent_works]
 
-        for i, parent in enumerate(parent_works):
+        for edge, parent in zip(edges, parent_works):
             parent: GraphNode = parent[0] if isinstance(parent, tuple) else parent
-            parent._add_child_edge(edges[i])
+            parent._add_child_edge(edge)
             parent.invalidate_children_cache()
         self._parent_edges += edges
         self.invalidate_parents_cache()
@@ -157,8 +160,8 @@ class GraphNode(JSONSerializable['GraphNode']):
         Return inseparable son (amount of inseparable sons at most 1)
         :return: inseparable son
         """
-        inseparable_children = list([x.finish for x in self._children_edges
-                                     if x.type == EdgeType.InseparableFinishStart])
+        inseparable_children = [x.finish for x in self._children_edges
+                                if x.type == EdgeType.InseparableFinishStart]
         return inseparable_children[0] if inseparable_children else None
 
     @cached_property
@@ -168,7 +171,7 @@ class GraphNode(JSONSerializable['GraphNode']):
         Return predecessor of current vertex in inseparable chain
         :return: inseparable parent
         """
-        inseparable_parents = list([x.start for x in self._parent_edges if x.type == EdgeType.InseparableFinishStart])
+        inseparable_parents = [x.start for x in self._parent_edges if x.type == EdgeType.InseparableFinishStart]
         return inseparable_parents[0] if inseparable_parents else None
 
     @cached_property
@@ -178,7 +181,7 @@ class GraphNode(JSONSerializable['GraphNode']):
         Return list of predecessors of current vertex
         :return: list of parents
         """
-        return list([edge.start for edge in self.edges_to if EdgeType.is_dependency(edge.type)])
+        return [edge.start for edge in self.edges_to if EdgeType.is_dependency(edge.type)]
 
     @cached_property
     # @property
@@ -196,7 +199,7 @@ class GraphNode(JSONSerializable['GraphNode']):
         Return list of successors of current vertex
         :return: list of children
         """
-        return list([edge.finish for edge in self.edges_from if EdgeType.is_dependency(edge.type)])
+        return [edge.finish for edge in self.edges_from if EdgeType.is_dependency(edge.type)]
 
     @cached_property
     # @property
@@ -213,7 +216,7 @@ class GraphNode(JSONSerializable['GraphNode']):
         Get all edges that have types SS with current vertex
         :return: list of neighbours
         """
-        return list([edge.start for edge in self._parent_edges if edge.type == EdgeType.StartStart])
+        return [edge.start for edge in self._parent_edges if edge.type == EdgeType.StartStart]
 
     @property
     def edges_to(self) -> list[GraphEdge]:
@@ -245,7 +248,7 @@ class GraphNode(JSONSerializable['GraphNode']):
         :return: list of GraphNode or None
         """
         return [self] + self._get_inseparable_children() \
-            if bool(self.inseparable_son) and not bool(self.inseparable_parent) \
+            if self.inseparable_son and not self.inseparable_parent \
             else None
 
     def get_inseparable_chain_with_self(self) -> list['GraphNode']:
@@ -279,6 +282,10 @@ class GraphNode(JSONSerializable['GraphNode']):
         """
         self._children_edges.append(child)
 
+    def min_start_time(self, node2swork: dict['GraphNode', ScheduledWork]) -> Time:
+        return max((node2swork[edge.start].finish_time + int(edge.lag)
+                    for edge in self.edges_to if edge.start in node2swork), default=Time(0))
+
 
 GraphNodeDict = dict[str, GraphNode]
 
@@ -298,7 +305,6 @@ class WorkGraph(JSONSerializable['WorkGraph']):
     adj_matrix: dok_matrix = field(init=False)
     dict_nodes: GraphNodeDict = field(init=False)
     vertex_count: int = field(init=False)
-
 
     def __post_init__(self) -> None:
         self.reinit()
@@ -330,6 +336,10 @@ class WorkGraph(JSONSerializable['WorkGraph']):
         object.__setattr__(self, 'start', deserialized.start)
         object.__setattr__(self, 'finish', deserialized.finish)
         self.__post_init__()
+
+    def __del__(self):
+        for attr in self.__dict__.values():
+            del attr
 
     def _serialize(self) -> T:
         return {
